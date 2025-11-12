@@ -117,6 +117,8 @@ export default function HostPage() {
     try {
       // Generate game PIN and create quiz in backend
       const gamePin = Math.floor(100000 + Math.random() * 900000).toString()
+      console.log(`Creating game with PIN: ${gamePin}`)
+      
       const quiz = {
         title: quizTitle,
         questions,
@@ -125,11 +127,17 @@ export default function HostPage() {
       }
 
       // Create game using enhanced quiz store (Firebase + fallback)
-      await enhancedQuizStore.createGame(gamePin, quiz)
+      console.log('Creating game in backend...')
+      const result = await enhancedQuizStore.createGame(gamePin, quiz)
+      console.log('Game creation result:', result)
       
       // Also store in sessionStorage as backup for compatibility
       sessionStorage.setItem("currentQuiz", JSON.stringify(quiz))
 
+      // Add a small delay to ensure Firebase has processed the write
+      await new Promise(resolve => setTimeout(resolve, 1000))
+
+      console.log('Redirecting to lobby...')
       router.push(`/lobby?pin=${gamePin}`)
     } catch (error) {
       console.error('Failed to create game:', error)

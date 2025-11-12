@@ -6,6 +6,8 @@ import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Users, Play, Copy, Check } from "lucide-react"
 import { enhancedQuizStore } from "@/lib/game-api"
+import { db } from "@/lib/firebase"
+import { doc, onSnapshot } from "firebase/firestore"
 
 type Player = {
   id: string
@@ -13,11 +15,13 @@ type Player = {
   score: number
 }
 
-type Quiz = {
-  title: string
-  questions: any[]
-  gamePin: string
+type GameState = {
+  currentQuestionIndex: number
+  questionStartTime: number
+  status: "lobby" | "playing" | "finished"
   players: Player[]
+  quiz?: any
+  gamePin?: string
 }
 
 export default function LobbyPage() {
@@ -26,7 +30,7 @@ export default function LobbyPage() {
   const pin = searchParams.get("pin")
   const isPlayer = searchParams.get("player") === "true"
 
-  const [quiz, setQuiz] = useState<Quiz | null>(null)
+  const [gameState, setGameState] = useState<GameState | null>(null)
   const [players, setPlayers] = useState<Player[]>([])
   const [copied, setCopied] = useState(false)
   const [joined, setJoined] = useState(false)
@@ -37,96 +41,135 @@ export default function LobbyPage() {
       return
     }
 
-    if (isPlayer) {
-      // Player joining
-      const playerName = sessionStorage.getItem("playerName")
-      if (!playerName) {
-        router.push("/join")
-        return
-      }
-
-      // Check if quiz exists
-      const storedQuiz = sessionStorage.getItem("currentQuiz")
-      if (!storedQuiz) {
-        alert("Game not found")
-        router.push("/join")
-        return
-      }
-
-      const quizData = JSON.parse(storedQuiz)
-      if (quizData.gamePin !== pin) {
-        alert("Invalid game PIN")
-        router.push("/join")
-        return
-      }
-
-      // Add player if not already joined
-      if (!joined) {
-        const playerId = Date.now().toString()
-        const newPlayer: Player = {
-          id: playerId,
-          name: playerName,
-          score: 0,
+    // Load initial game state from Firestore/API
+    const loadGameState = async () => {
+      try {
+        console.log('Lobby: Loading initial game state for PIN:', pin)
+        const gameState = await enhancedQuizStore.getGame(pin)
+        if (gameState) {
+          console.log('Lobby: Initial game state loaded:', gameState)
+          setGameState(gameState)
+          setPlayers(gameState.players || [])
+          
+          // Store in sessionStorage for compatibility
+          sessionStorage.setItem("currentQuiz", JSON.stringify(gameState))
+        } else {
+          console.error('Lobby: Game state not found')
+          alert("Game not found")
+          router.push(isPlayer ? "/join" : "/host")
+          return
         }
-
-        const existingPlayers = quizData.players || []
-        const updatedPlayers = [...existingPlayers, newPlayer]
-        quizData.players = updatedPlayers
-
-        sessionStorage.setItem("currentQuiz", JSON.stringify(quizData))
-        sessionStorage.setItem("playerId", playerId)
-
-        setQuiz(quizData)
-        setPlayers(updatedPlayers)
-        setJoined(true)
-      }
-    } else {
-      // Host view
-      const storedQuiz = sessionStorage.getItem("currentQuiz")
-      if (!storedQuiz) {
-        router.push("/host")
+      } catch (error) {
+        console.error('Lobby: Failed to load game state:', error)
+        alert("Failed to load game")
+        router.push(isPlayer ? "/join" : "/host")
         return
       }
-
-      const quizData = JSON.parse(storedQuiz)
-      setQuiz(quizData)
-      setPlayers(quizData.players || [])
     }
 
-    // Poll for game updates from backend
-    const interval = setInterval(async () => {
+    // Load initial state
+    loadGameState()
+
+    // Set up real-time listener for game updates
+    let unsubscribe: (() => void) | null = null
+    
+    if (pin) {
+      try {
+        // Try to set up Firestore real-time listener
+        const gameRef = doc(db, 'games', pin)
+        unsubscribe = onSnapshot(gameRef, (doc) => {
+          if (doc.exists()) {
+            const gameState = doc.data()
+            console.log('Lobby: Real-time update received:', gameState)
+            console.log('Game status:', gameState.status)
+            console.log('Is player:', isPlayer)
+            
+            setPlayers(gameState.players || [])
+            
+            // Update local storage for compatibility
+            sessionStorage.setItem("currentQuiz", JSON.stringify(gameState))
+
+            // Check if game started
+            if (gameState.status === "playing") {
+              console.log('Game status is playing, redirecting to play page...')
+              router.push(`/play?pin=${pin}${isPlayer ? "&player=true" : ""}`)
+            }
+          } else {
+            console.log('Lobby: Document does not exist')
+          }
+        }, (error) => {
+          console.warn('Firestore listener failed, falling back to polling:', error)
+          
+          // Fallback to polling if real-time listener fails
+          const interval = setInterval(async () => {
+            console.log('Lobby: Polling for game state changes...')
+            try {
+              const gameState = await enhancedQuizStore.getGame(pin)
+              if (gameState) {
+                console.log('Lobby: Polling - Game state:', gameState.status)
+                setPlayers(gameState.players || [])
+                sessionStorage.setItem("currentQuiz", JSON.stringify(gameState))
+
+                if (gameState.status === "playing") {
+                  console.log('Lobby: Polling detected game is playing, redirecting...')
+                  router.push(`/play?pin=${pin}${isPlayer ? "&player=true" : ""}`)
+                }
+              }
+            } catch (error) {
+              console.error('Polling failed:', error)
+            }
+          }, 1000)
+          
+          // Store interval for cleanup
+          unsubscribe = () => clearInterval(interval)
+        })
+      } catch (error) {
+        console.warn('Failed to set up Firestore listener, using polling:', error)
+        
+        // Fallback polling method
+        const interval = setInterval(async () => {
+          try {
+            const gameState = await enhancedQuizStore.getGame(pin)
+            if (gameState) {
+              setPlayers(gameState.players || [])
+              sessionStorage.setItem("currentQuiz", JSON.stringify(gameState))
+
+              if (gameState.status === "playing") {
+                router.push(`/play?pin=${pin}${isPlayer ? "&player=true" : ""}`)
+              }
+            }
+          } catch (error) {
+            console.error('Polling failed:', error)
+          }
+        }, 1000)
+        
+        unsubscribe = () => clearInterval(interval)
+      }
+    }
+
+    // Always add a backup polling mechanism for critical game state changes
+    const backupInterval = setInterval(async () => {
       if (!pin) return
       
       try {
-        // Get latest game state from backend
+        console.log('Lobby: Backup polling check...')
         const gameState = await enhancedQuizStore.getGame(pin)
-        if (gameState) {
-          setPlayers(gameState.players || [])
-          
-          // Update local storage for compatibility
-          sessionStorage.setItem("currentQuiz", JSON.stringify(gameState))
-
-          // Check if game started
-          if (gameState.status === "playing") {
-            router.push(`/play?pin=${pin}${isPlayer ? "&player=true" : ""}`)
-          }
+        if (gameState && gameState.status === "playing") {
+          console.log('Lobby: Backup polling detected playing status, redirecting...')
+          clearInterval(backupInterval)
+          router.push(`/play?pin=${pin}${isPlayer ? "&player=true" : ""}`)
         }
       } catch (error) {
-        console.error('Failed to fetch game state:', error)
-        // Fallback to sessionStorage
-        const storedQuiz = sessionStorage.getItem("currentQuiz")
-        if (storedQuiz) {
-          const quizData = JSON.parse(storedQuiz)
-          setPlayers(quizData.players || [])
-
-          if (quizData.status === "playing") {
-            router.push(`/play?pin=${pin}${isPlayer ? "&player=true" : ""}`)
-          }
-        }
+        console.error('Backup polling failed:', error)
       }
-    }, 2000)
+    }, 500) // Check every 500ms for game start
 
-    return () => clearInterval(interval)
+    return () => {
+      if (unsubscribe) {
+        unsubscribe()
+      }
+      clearInterval(backupInterval)
+    }
   }, [pin, isPlayer, router, joined])
 
   const copyPin = () => {
@@ -138,7 +181,7 @@ export default function LobbyPage() {
   }
 
   const startGame = async () => {
-    if (!quiz || !pin) return
+    if (!gameState || !pin) return
 
     if (players.length === 0) {
       alert("Wait for at least one player to join")
@@ -146,16 +189,22 @@ export default function LobbyPage() {
     }
 
     try {
+      console.log('Host: Starting game with PIN:', pin)
+      console.log('Host: Current players:', players.length)
+      
       // Update game state to "playing" using enhanced quiz store
+      console.log('Host: Updating game state to playing...')
       await enhancedQuizStore.updateGameState(pin, { 
         status: "playing",
         questionStartTime: Date.now()
       })
       
+      console.log('Host: Game state updated, updating local storage...')
       // Update local storage for compatibility
-      const updatedQuiz = { ...quiz, status: "playing" }
-      sessionStorage.setItem("currentQuiz", JSON.stringify(updatedQuiz))
+      const updatedGameState = { ...gameState, status: "playing" }
+      sessionStorage.setItem("currentQuiz", JSON.stringify(updatedGameState))
       
+      console.log('Host: Redirecting to play page...')
       router.push(`/play?pin=${pin}`)
     } catch (error) {
       console.error('Failed to start game:', error)
@@ -163,7 +212,7 @@ export default function LobbyPage() {
     }
   }
 
-  if (!quiz) {
+  if (!gameState) {
     return (
       <main className="min-h-screen bg-gradient-to-br from-purple-600 via-blue-600 to-cyan-500 flex items-center justify-center">
         <div className="text-white text-2xl">Loading...</div>
@@ -187,7 +236,7 @@ export default function LobbyPage() {
       <div className="max-w-6xl mx-auto space-y-6">
         <Card className="p-8 bg-white/95 backdrop-blur text-center">
           <h1 className="text-3xl md:text-4xl font-bold mb-4 text-balance bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">
-            {quiz.title}
+            {gameState.quiz?.title || "Quiz Game"}
           </h1>
 
           <div className="flex items-center justify-center gap-4 mb-6">
@@ -195,7 +244,7 @@ export default function LobbyPage() {
               <p className="text-sm text-muted-foreground mb-2">Game PIN</p>
               <div className="flex items-center gap-2">
                 <div className="text-4xl font-bold tracking-wider bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">
-                  {quiz.gamePin}
+                  {pin}
                 </div>
                 {!isPlayer && (
                   <Button size="sm" variant="outline" onClick={copyPin} className="h-10 w-10 p-0 bg-transparent">

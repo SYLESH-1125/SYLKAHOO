@@ -22,24 +22,41 @@ export default function JoinPage() {
     }
 
     try {
-      // Check if game exists and join using enhanced quiz store
+      console.log(`Attempting to join game with PIN: ${gamePin}`)
+      
+      // First check if game exists
       const gameState = await enhancedQuizStore.getGame(gamePin)
+      console.log('Game state retrieved:', gameState)
+      
       if (!gameState) {
-        alert("Game not found. Please check the PIN.")
+        console.error('Game state is null or undefined')
+        alert("Game not found. Please check the PIN and make sure the host has created the game.")
         return
       }
 
+      // Check if game is in lobby status
+      if (gameState.status !== 'lobby') {
+        console.error('Game status is not lobby:', gameState.status)
+        alert("This game has already started or ended. Please get a new PIN from the host.")
+        return
+      }
+
+      console.log('Attempting to join game...')
       // Join the game
       const result = await enhancedQuizStore.joinGame(gamePin, playerName)
+      console.log('Join result:', result)
       
-      // Store player info for compatibility
+      // Store player info and game state for compatibility
       sessionStorage.setItem("playerName", playerName)
       sessionStorage.setItem("playerId", result.playerId)
+      sessionStorage.setItem("currentQuiz", JSON.stringify(gameState))
 
+      console.log('Redirecting to lobby...')
       router.push(`/lobby?pin=${gamePin}&player=true`)
     } catch (error) {
-      console.error('Failed to join game:', error)
-      alert("Failed to join game. Please check the PIN and try again.")
+      console.error('Failed to join game - Full error:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Please check the PIN and try again.'
+      alert(`Failed to join game: ${errorMessage}`)
     }
   }
 

@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Trophy } from "lucide-react"
+import Confetti from "@/components/confetti"
 
 type Answer = {
   text: string
@@ -45,6 +46,7 @@ export default function PlayPage() {
     return quiz.questions || quiz.quiz?.questions || []
   }
   const [showLeaderboard, setShowLeaderboard] = useState(false)
+  const [leaderboardCountdown, setLeaderboardCountdown] = useState(5)
   const [players, setPlayers] = useState<Player[]>([])
 
   useEffect(() => {
@@ -75,6 +77,10 @@ export default function PlayPage() {
       setTimeLeft((prev) => {
         if (prev <= 1) {
           setShowResults(true)
+          // Automatically show leaderboard after 2 seconds of results
+          setTimeout(() => {
+            setShowLeaderboard(true)
+          }, 2000)
           return 0
         }
         return prev - 1
@@ -98,6 +104,24 @@ export default function PlayPage() {
 
     return () => clearInterval(interval)
   }, [isPlayer, quiz])
+
+  // Leaderboard countdown timer
+  useEffect(() => {
+    if (!showLeaderboard) return
+
+    setLeaderboardCountdown(5) // Reset countdown
+    const timer = setInterval(() => {
+      setLeaderboardCountdown((prev) => {
+        if (prev <= 1) {
+          nextQuestion()
+          return 5
+        }
+        return prev - 1
+      })
+    }, 1000)
+
+    return () => clearInterval(timer)
+  }, [showLeaderboard])
 
   const handleAnswerSelect = (answerIndex: number) => {
     if (answered || !isPlayer) return
@@ -132,14 +156,7 @@ export default function PlayPage() {
     }
   }
 
-  const showIntermediateLeaderboard = () => {
-    setShowLeaderboard(true)
 
-    // Auto-advance after 5 seconds
-    setTimeout(() => {
-      nextQuestion()
-    }, 5000)
-  }
 
   const nextQuestion = () => {
     const nextIndex = currentQuestionIndex + 1
@@ -162,6 +179,7 @@ export default function PlayPage() {
     setAnswered(false)
     setShowResults(false)
     setShowLeaderboard(false)
+    setLeaderboardCountdown(5)
 
     // Clear current answers
     const storedQuiz = sessionStorage.getItem("currentQuiz")
@@ -249,12 +267,17 @@ export default function PlayPage() {
   if (showLeaderboard) {
     return (
       <main className="min-h-screen bg-gradient-to-br from-purple-600 via-blue-600 to-cyan-500 p-4 md:p-8">
+        <Confetti />
         <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in duration-500">
-          <Card className="p-8 bg-white/95 backdrop-blur text-center">
-            <h2 className="text-3xl md:text-4xl font-bold mb-2 bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">
-              Current Standings
-            </h2>
-            <p className="text-muted-foreground">After Question {currentQuestionIndex + 1}</p>
+          <Card className="p-8 bg-white/95 backdrop-blur text-center relative overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-r from-purple-500/10 via-blue-500/10 to-cyan-500/10 animate-pulse"></div>
+            <div className="relative z-10">
+              <div className="text-6xl mb-4">🏆</div>
+              <h2 className="text-3xl md:text-4xl font-bold mb-2 bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">
+                Current Leaderboard
+              </h2>
+              <p className="text-muted-foreground">After Question {currentQuestionIndex + 1} of {questions.length}</p>
+            </div>
           </Card>
 
           <Card className="p-6 bg-white/95 backdrop-blur">
@@ -265,12 +288,16 @@ export default function PlayPage() {
                   <div
                     key={player.id}
                     className={`flex items-center justify-between p-4 rounded-lg transform transition-all animate-in slide-in-from-left duration-500 ${
-                      index < 3
-                        ? "bg-gradient-to-r from-purple-100 to-blue-100 border-2 border-purple-300"
-                        : isCurrentPlayer
-                          ? "bg-blue-50 border-2 border-blue-300"
-                          : "bg-gray-50"
-                    }`}
+                      index === 0
+                        ? "bg-gradient-to-r from-yellow-100 to-orange-100 border-2 border-yellow-400 shadow-xl shadow-yellow-400/30"
+                        : index === 1
+                          ? "bg-gradient-to-r from-gray-100 to-gray-200 border-2 border-gray-400 shadow-lg shadow-gray-400/30"
+                          : index === 2
+                            ? "bg-gradient-to-r from-orange-100 to-yellow-100 border-2 border-orange-400 shadow-lg shadow-orange-400/30"
+                            : isCurrentPlayer
+                              ? "bg-blue-50 border-2 border-blue-300"
+                              : "bg-gray-50"
+                    } ${index < 3 ? "animate-bounce" : ""}`}
                     style={{ animationDelay: `${index * 100}ms` }}
                   >
                     <div className="flex items-center gap-4">
@@ -307,17 +334,18 @@ export default function PlayPage() {
                 onClick={nextQuestion}
                 className="h-14 px-8 text-xl font-semibold bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
               >
-                Next Question
+                {currentQuestionIndex < getQuestions().length - 1 ? "Skip to Next Question" : "Show Final Results"}
               </Button>
             </Card>
           )}
 
-          {isPlayer && (
-            <Card className="p-6 bg-white/95 backdrop-blur text-center">
-              <p className="text-lg text-muted-foreground">Get ready for the next question...</p>
-              <div className="text-4xl font-bold text-purple-600 mt-2 animate-pulse">5s</div>
-            </Card>
-          )}
+          <Card className="p-6 bg-white/95 backdrop-blur text-center">
+            <p className="text-lg text-muted-foreground">
+              {currentQuestionIndex < getQuestions().length - 1 ? "Next question starting in..." : "Final results coming up in..."}
+            </p>
+            <div className="text-6xl font-bold text-purple-600 mt-2 animate-pulse">{leaderboardCountdown}</div>
+            <div className="text-sm text-muted-foreground mt-2">seconds</div>
+          </Card>
         </div>
       </main>
     )
@@ -381,7 +409,7 @@ export default function PlayPage() {
         {/* Player feedback */}
         {isPlayer && answered && (
           <Card className="p-6 bg-white/95 backdrop-blur text-center animate-in zoom-in duration-500">
-            {showResults ? (
+            {showResults && !showLeaderboard ? (
               currentQuestion.answers[selectedAnswer!].isCorrect ? (
                 <div>
                   <div className="text-6xl mb-2">🎉</div>
@@ -389,7 +417,7 @@ export default function PlayPage() {
                   <p className="text-xl font-semibold text-purple-600">
                     +{Math.floor(1000 + (timeLeft / currentQuestion.timeLimit) * 500)} points
                   </p>
-                  <p className="text-muted-foreground mt-2">Waiting for next question...</p>
+                  <p className="text-muted-foreground mt-2">Get ready for the leaderboard...</p>
                 </div>
               ) : (
                 <div>
@@ -401,28 +429,26 @@ export default function PlayPage() {
                       {currentQuestion.answers.find((a: Answer) => a.isCorrect)?.text}
                     </span>
                   </p>
-                  <p className="text-muted-foreground mt-2">Better luck next time!</p>
+                  <p className="text-muted-foreground mt-2">Get ready for the leaderboard...</p>
                 </div>
               )
-            ) : (
+            ) : !showResults ? (
               <div>
                 <div className="text-6xl mb-2">✅</div>
                 <p className="text-3xl font-bold text-purple-600">Answer submitted!</p>
                 <p className="text-muted-foreground mt-2">Waiting for time to run out...</p>
               </div>
-            )}
+            ) : null}
           </Card>
         )}
 
-        {/* Host controls */}
-        {!isPlayer && showResults && (
+        {/* Results phase - leaderboard will show automatically */}
+        {!isPlayer && showResults && !showLeaderboard && (
           <Card className="p-6 bg-white/95 backdrop-blur text-center animate-in zoom-in duration-300">
-            <Button
-              onClick={showIntermediateLeaderboard}
-              className="h-14 px-8 text-xl font-semibold bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
-            >
-              {currentQuestionIndex < getQuestions().length - 1 ? "Show Leaderboard" : "Show Final Results"}
-            </Button>
+            <p className="text-lg font-bold text-purple-600">Showing leaderboard in 2 seconds...</p>
+            <div className="mt-2">
+              <div className="w-8 h-8 border-4 border-purple-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
+            </div>
           </Card>
         )}
       </div>
